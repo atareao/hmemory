@@ -1,0 +1,5 @@
+name: hmprovider
+version: 1.0.0
+description: "pgvector RAG-backed memory over HTTP — Hermes Memory bridge"
+hooks:
+  - on_session_end

@@ -1,0 +1,454 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "hmemory — Hermes Memory Provider",
+    "version": "0.1.0",
+    "description": "RAG-backed persistent memory for Hermes Agent. Hybrid vector+BM25 search, pgvector backend.\n\nSee [README](./README.md) for setup."
+  },
+  "servers": [
+    { "url": "http://localhost:8080", "description": "Local dev" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "status": { "type": "string" } },
+                  "example": { "status": "ok" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/initialize": {
+      "post": {
+        "summary": "Initialize session",
+        "operationId": "initialize",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string" }
+                },
+                "required": ["session_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session initialized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "session_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prefetch": {
+      "post": {
+        "summary": "Search memories by semantic similarity",
+        "operationId": "prefetch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string", "description": "Search query" },
+                  "session_id": { "type": "string", "nullable": true },
+                  "limit": { "type": "integer", "default": 5 },
+                  "tag_filter": { "type": "object" },
+                  "tag_match_mode": { "type": "string", "enum": ["all", "any"], "default": "all" },
+                  "category_filter": { "type": "string" },
+                  "created_after": { "type": "string", "format": "date-time" },
+                  "created_before": { "type": "string", "format": "date-time" },
+                  "min_importance": { "type": "number", "format": "float" },
+                  "level": { "type": "string", "enum": ["summary", "overview", "details"], "default": "details" }
+                },
+                "required": ["query"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching memories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "memories": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MemoryRecord"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync_turn": {
+      "post": {
+        "summary": "Store a conversation turn",
+        "operationId": "syncTurn",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": { "type": "string" },
+                  "assistant": { "type": "string" },
+                  "session_id": { "type": "string" },
+                  "tags": { "type": "object" },
+                  "metadata": { "type": "object" },
+                  "importance": { "type": "number", "format": "float" },
+                  "source": { "type": "string" },
+                  "category": { "type": "string" }
+                },
+                "required": ["user", "assistant", "session_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Turn stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "stored": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool_schemas": {
+      "get": {
+        "summary": "Get available tool schemas for Hermes",
+        "operationId": "toolSchemas",
+        "responses": {
+          "200": {
+            "description": "Tool schema list"
+          }
+        }
+      }
+    },
+    "/handle_tool_call": {
+      "post": {
+        "summary": "Execute a memory tool",
+        "operationId": "handleToolCall",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tool_name": { "type": "string" },
+                  "args": { "type": "object" },
+                  "session_id": { "type": "string" }
+                },
+                "required": ["tool_name", "args", "session_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Tool execution result" }
+        }
+      }
+    },
+    "/session/resolve": {
+      "post": {
+        "summary": "Resolve or create a session with strategy",
+        "operationId": "resolveSession",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "strategy": { "type": "string", "enum": ["per-session", "per-directory", "per-repo", "global"] },
+                  "path_or_repo": { "type": "string" }
+                },
+                "required": ["session_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "session_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/status": {
+      "post": {
+        "summary": "Get session status (cold/warm, turn count)",
+        "operationId": "sessionStatus",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string" }
+                },
+                "required": ["session_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session status"
+          }
+        }
+      }
+    },
+    "/session/conclude": {
+      "post": {
+        "summary": "Create a conclusion/insight memory",
+        "operationId": "conclude",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "content": { "type": "string" },
+                  "category": { "type": "string" },
+                  "confidence": { "type": "number", "format": "float" },
+                  "source_turn_ids": {
+                    "type": "array",
+                    "items": { "type": "integer" }
+                  }
+                },
+                "required": ["session_id", "content"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Conclusion created" }
+        }
+      }
+    },
+    "/memories/list": {
+      "post": {
+        "summary": "List memories with pagination",
+        "operationId": "listMemories",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": { "type": "string", "nullable": true },
+                  "limit": { "type": "integer", "default": 20 },
+                  "offset": { "type": "integer", "default": 0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Memory list" } }
+      }
+    },
+    "/memories/get": {
+      "post": {
+        "summary": "Get a single memory by ID",
+        "operationId": "getMemory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "integer" }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Memory record" } }
+      }
+    },
+    "/memories/update": {
+      "post": {
+        "summary": "Update a memory",
+        "operationId": "updateMemory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "integer" },
+                  "content": { "type": "string" },
+                  "tags": { "type": "object" },
+                  "metadata": { "type": "object" },
+                  "importance": { "type": "number", "format": "float" },
+                  "category": { "type": "string" },
+                  "source": { "type": "string" }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Update result" } }
+      }
+    },
+    "/memories/feedback": {
+      "post": {
+        "summary": "Submit relevance feedback",
+        "operationId": "feedback",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "integer" },
+                  "useful": { "type": "boolean" }
+                },
+                "required": ["id", "useful"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Feedback recorded" } }
+      }
+    },
+    "/backup": {
+      "post": {
+        "summary": "Export all memories as JSON",
+        "operationId": "backup",
+        "responses": {
+          "200": { "description": "Full memory dump" }
+        }
+      }
+    },
+    "/restore": {
+      "post": {
+        "summary": "Restore memories from backup",
+        "operationId": "restore",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "memories": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/FullMemoryRecord" }
+                  }
+                },
+                "required": ["memories"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Restore result" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MemoryRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "session_id": { "type": "string" },
+          "content": { "type": "string" },
+          "tags": { "type": "object" },
+          "source": { "type": "string" },
+          "category": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "score": { "type": "number", "format": "double" }
+        }
+      },
+      "FullMemoryRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "session_id": { "type": "string" },
+          "content": { "type": "string" },
+          "embedding": {
+            "type": "array",
+            "items": { "type": "number", "format": "float" }
+          },
+          "tags": { "type": "object" },
+          "metadata": { "type": "object" },
+          "importance": { "type": "number", "format": "float" },
+          "source": { "type": "string" },
+          "category": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "feedback_positive": { "type": "integer" },
+          "feedback_negative": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

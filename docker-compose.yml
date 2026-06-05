@@ -1,0 +1,37 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: hmemory
+      POSTGRES_DB: hmemory
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  hmemory:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:hmemory@db:5432/hmemory
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      HYBRID_ALPHA: ${HYBRID_ALPHA:-0.5}
+      DECAY_HALF_LIFE_DAYS: ${DECAY_HALF_LIFE_DAYS:-30}
+      SYNC_TURN_MIN_IMPORTANCE: ${SYNC_TURN_MIN_IMPORTANCE:-0.3}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/text-embedding-3-small}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
