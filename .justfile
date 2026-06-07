@@ -17,6 +17,7 @@ fmt-fix:
 
 build:
     @podman build \
+        --format=docker \
         --tag={{user}}/{{name}}:{{version}} \
         --tag={{user}}/{{name}}:latest .
 

@@ -12,7 +12,6 @@ pub struct Config {
     pub hybrid_alpha: f32,
     pub decay_half_life_days: f64,
     pub sync_turn_min_importance: f32,
-    pub session_strategy: SessionStrategy,
     pub prefetch_cadence: u64,
     pub sync_turn_cadence: u64,
     pub conclusion_cadence: u64,
@@ -20,20 +19,22 @@ pub struct Config {
     pub base_context_cadence: u64,
     pub rerank_enabled: bool,
     pub rerank_model: String,
+    pub batch_size: usize,
+    pub batch_idle_seconds: u64,
+    pub fresh_ttl_hours: u64,
+    pub consolidation_cadence: u64,
+    pub consolidation_model: String,
+    pub prune_deep_importance: f32,
+    pub prune_deep_access_count: i32,
+    pub prune_deep_age_days: i64,
+    pub prune_consolid_insight: f32,
+    pub prune_consolid_age_days: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum EmbeddingProviderKind {
     OpenRouter,
     Ollama,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SessionStrategy {
-    PerSession,
-    PerDirectory,
-    PerRepo,
-    Global,
 }
 
 impl Config {
@@ -76,12 +77,6 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.3),
-            session_strategy: match env::var("SESSION_STRATEGY").as_deref() {
-                Ok("per-directory") => SessionStrategy::PerDirectory,
-                Ok("per-repo") => SessionStrategy::PerRepo,
-                Ok("global") => SessionStrategy::Global,
-                _ => SessionStrategy::PerSession,
-            },
             prefetch_cadence: env::var("PREFETCH_CADENCE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -94,9 +89,7 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10),
-            context_tokens: env::var("CONTEXT_TOKENS")
-                .ok()
-                .and_then(|v| v.parse().ok()),
+            context_tokens: env::var("CONTEXT_TOKENS").ok().and_then(|v| v.parse().ok()),
             base_context_cadence: env::var("BASE_CONTEXT_CADENCE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -107,6 +100,44 @@ impl Config {
                 .unwrap_or(false),
             rerank_model: env::var("RERANK_MODEL")
                 .unwrap_or_else(|_| "cross-encoder/ms-marco-MiniLM-L-6-v2".to_string()),
+            batch_size: env::var("BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+            batch_idle_seconds: env::var("BATCH_IDLE_SECONDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300),
+            fresh_ttl_hours: env::var("FRESH_TTL_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(48),
+            consolidation_cadence: env::var("CONSOLIDATION_CADENCE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3600),
+            consolidation_model: env::var("CONSOLIDATION_MODEL")
+                .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string()),
+            prune_deep_importance: env::var("PRUNE_DEEP_IMPORTANCE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.05),
+            prune_deep_access_count: env::var("PRUNE_DEEP_ACCESS_COUNT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            prune_deep_age_days: env::var("PRUNE_DEEP_AGE_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(90),
+            prune_consolid_insight: env::var("PRUNE_CONSOLID_INSIGHT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.05),
+            prune_consolid_age_days: env::var("PRUNE_CONSOLID_AGE_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
         }
     }
 }
