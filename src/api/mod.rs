@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/remind", post(handlers::remind))
         .route("/deep_search", post(handlers::deep_search))
         .route("/memory_stats", get(handlers::memory_stats))
+        .route("/stats/detailed", post(handlers::detailed_stats))
         .route("/flush", post(handlers::flush))
         .with_state(state)
         .layer(CorsLayer::permissive())

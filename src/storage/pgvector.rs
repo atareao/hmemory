@@ -1,6 +1,7 @@
 use super::{
-    CompactReport, MemoryLink, MemoryRecord, MemoryRecordConsolid, MemoryStats, MemoryStore,
-    ProfileStatus, ProfileTierCounts, SearchFilters, SnapshotDiff, TagMatchMode,
+    CompactReport, DetailedMemoryStats, LabelCount, MemoryLink, MemoryRecord, MemoryRecordConsolid,
+    MemoryStats, MemoryStore, NumericStats, ProfileDetailedStats, ProfileStatus, ProfileTierCounts,
+    SearchFilters, SnapshotDiff, TagMatchMode, TierCounts,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -1973,6 +1974,384 @@ impl MemoryStore for PgVectorStore {
             fresh_count: fresh as u64,
             deep_count: deep as u64,
             consolid_count: consolid as u64,
+            per_profile,
+        })
+    }
+
+    async fn detailed_stats(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<DetailedMemoryStats, Box<dyn std::error::Error + Send + Sync>> {
+        let pool = &self.pool;
+
+        let deep_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_deep WHERE ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let fresh_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_fresh WHERE ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let consolid_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_consolid WHERE ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let total_profiles: i64 =
+            sqlx::query_scalar("SELECT COUNT(DISTINCT profile) FROM memories_deep")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+
+        let total_links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_links")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+        let deep_numeric: Option<(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, i64, String, String)> =
+            sqlx::query_as(
+                r#"SELECT
+                    COALESCE(MIN(importance)::double precision, 0) AS imp_min,
+                    COALESCE(AVG(importance)::double precision, 0) AS imp_avg,
+                    COALESCE(MAX(importance)::double precision, 0) AS imp_max,
+                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY importance)::double precision, 0) AS imp_median,
+                    COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY importance)::double precision, 0) AS imp_p95,
+                    COALESCE(MIN(trust_score)::double precision, 0) AS ts_min,
+                    COALESCE(AVG(trust_score)::double precision, 0) AS ts_avg,
+                    COALESCE(MAX(trust_score)::double precision, 0) AS ts_max,
+                    COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY trust_score)::double precision, 0) AS ts_median,
+                    COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY trust_score)::double precision, 0) AS ts_p95,
+                    COALESCE(MIN(access_count)::double precision, 0) AS ac_min,
+                    COALESCE(AVG(access_count)::double precision, 0) AS ac_avg,
+                    COALESCE(MAX(access_count)::double precision, 0) AS ac_max,
+                    COALESCE(COUNT(*)::bigint, 0) AS cnt,
+                    COALESCE(MIN(created_at)::text, '') AS oldest,
+                    COALESCE(MAX(created_at)::text, '') AS newest
+                 FROM memories_deep
+                 WHERE ($1::text IS NULL OR profile = $1)"#,
+            )
+            .bind(profile)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+
+        let content_len: Option<(f64, f64, f64, f64, f64)> = sqlx::query_as(
+            r#"SELECT
+                COALESCE(MIN(char_length(content))::double precision, 0),
+                COALESCE(AVG(char_length(content))::double precision, 0),
+                COALESCE(MAX(char_length(content))::double precision, 0),
+                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY char_length(content))::double precision, 0),
+                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY char_length(content))::double precision, 0)
+             FROM memories_deep
+             WHERE ($1::text IS NULL OR profile = $1)"#,
+        )
+        .bind(profile)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+        let access_stats: Option<(f64, f64)> = sqlx::query_as(
+            r#"SELECT
+                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY access_count)::double precision, 0),
+                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY access_count)::double precision, 0)
+             FROM memories_deep
+             WHERE ($1::text IS NULL OR profile = $1)"#,
+        )
+        .bind(profile)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+        let feedback: Option<(i64, i64)> = sqlx::query_as(
+            r#"SELECT
+                COALESCE(SUM(feedback_positive), 0)::bigint,
+                COALESCE(SUM(feedback_negative), 0)::bigint
+             FROM memories_deep
+             WHERE ($1::text IS NULL OR profile = $1)"#,
+        )
+        .bind(profile)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+        let immortal_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_deep WHERE immortal = true AND ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let expired_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_deep WHERE expires_at IS NOT NULL AND expires_at < NOW() AND ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let reminders_active: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_deep WHERE reminder_interval IS NOT NULL AND ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let reminders_sent: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories_deep WHERE reminder_sent = true AND ($1::text IS NULL OR profile = $1)",
+        )
+        .bind(profile)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let categories: Vec<(String, i64)> = sqlx::query_as(
+            r#"SELECT category, COUNT(*)::bigint AS cnt
+             FROM memories_deep
+             WHERE category != '' AND ($1::text IS NULL OR profile = $1)
+             GROUP BY category
+             ORDER BY cnt DESC
+             LIMIT 20"#,
+        )
+        .bind(profile)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let sources: Vec<(String, i64)> = sqlx::query_as(
+            r#"SELECT source, COUNT(*)::bigint AS cnt
+             FROM memories_deep
+             WHERE source != '' AND ($1::text IS NULL OR profile = $1)
+             GROUP BY source
+             ORDER BY cnt DESC
+             LIMIT 20"#,
+        )
+        .bind(profile)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let tags: Vec<(String, i64)> = sqlx::query_as(
+            r#"SELECT tag, COUNT(*)::bigint AS cnt
+             FROM memories_deep, LATERAL jsonb_object_keys(tags) AS tag
+             WHERE ($1::text IS NULL OR profile = $1)
+             GROUP BY tag
+             ORDER BY cnt DESC
+             LIMIT 20"#,
+        )
+        .bind(profile)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let depths: Vec<(String, i64)> = sqlx::query_as(
+            r#"SELECT depth, COUNT(*)::bigint AS cnt
+             FROM memories_consolid
+             WHERE ($1::text IS NULL OR profile = $1)
+             GROUP BY depth
+             ORDER BY cnt DESC"#,
+        )
+        .bind(profile)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let profile_rows: Vec<(String, i64, i64, i64, f64, String, i64, i64)> = sqlx::query_as(
+            r#"SELECT
+                d.profile,
+                COALESCE(d.cnt, 0) AS deep,
+                COALESCE(f.cnt, 0) AS fresh,
+                COALESCE(c.cnt, 0) AS consolid,
+                COALESCE(d.imp_avg, 0)::double precision AS importance_avg,
+                COALESCE(d.top_cat, '') AS top_category,
+                COALESCE(d.fb_pos, 0)::bigint AS feedback_positive,
+                COALESCE(d.fb_neg, 0)::bigint AS feedback_negative
+             FROM (
+                SELECT profile, COUNT(*) AS cnt,
+                    AVG(importance) AS imp_avg,
+                    (SELECT category FROM memories_deep d2 WHERE d2.profile = d1.profile AND d2.category != '' GROUP BY category ORDER BY COUNT(*) DESC LIMIT 1) AS top_cat,
+                    SUM(feedback_positive) AS fb_pos,
+                    SUM(feedback_negative) AS fb_neg
+                FROM memories_deep d1
+                WHERE ($1::text IS NULL OR profile = $1)
+                GROUP BY profile
+             ) d
+             LEFT JOIN (SELECT profile, COUNT(*) AS cnt FROM memories_fresh WHERE ($1::text IS NULL OR profile = $1) GROUP BY profile) f ON d.profile = f.profile
+             LEFT JOIN (SELECT profile, COUNT(*) AS cnt FROM memories_consolid WHERE ($1::text IS NULL OR profile = $1) GROUP BY profile) c ON d.profile = c.profile
+             ORDER BY d.cnt DESC"#,
+        )
+        .bind(profile)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let per_profile: Vec<ProfileDetailedStats> = profile_rows
+            .into_iter()
+            .map(
+                |(p, deep, fresh, consolid, imp_avg, top_cat, fb_pos, fb_neg)| {
+                    ProfileDetailedStats {
+                        profile: p,
+                        tier_counts: TierCounts {
+                            fresh: fresh as u64,
+                            deep: deep as u64,
+                            consolid: consolid as u64,
+                        },
+                        importance_avg: imp_avg,
+                        top_category: if top_cat.is_empty() {
+                            None
+                        } else {
+                            Some(top_cat)
+                        },
+                        feedback_positive: fb_pos,
+                        feedback_negative: fb_neg,
+                        memory_count: (deep + fresh + consolid) as u64,
+                    }
+                },
+            )
+            .collect();
+
+        let (
+            imp_min,
+            imp_avg,
+            imp_max,
+            imp_median,
+            imp_p95,
+            ts_min,
+            ts_avg,
+            ts_max,
+            ts_median,
+            ts_p95,
+            ac_min,
+            ac_avg,
+            ac_max,
+            cnt,
+            oldest_str,
+            newest_str,
+        ) = deep_numeric.unwrap_or((
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0,
+            String::new(),
+            String::new(),
+        ));
+
+        let (cl_min, cl_avg, cl_max, cl_median, cl_p95) =
+            content_len.unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+        let (ac_median, ac_p95) = access_stats.unwrap_or((0.0, 0.0));
+        let (fb_pos, fb_neg) = feedback.unwrap_or((0, 0));
+
+        let oldest = chrono::DateTime::parse_from_rfc3339(&oldest_str)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc));
+        let newest = chrono::DateTime::parse_from_rfc3339(&newest_str)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc));
+
+        let deep_count_u = deep_count as u64;
+        let fresh_count_u = fresh_count as u64;
+        let consolid_count_u = consolid_count as u64;
+
+        Ok(DetailedMemoryStats {
+            tier_counts: TierCounts {
+                fresh: fresh_count_u,
+                deep: deep_count_u,
+                consolid: consolid_count_u,
+            },
+            total_memories: deep_count_u + fresh_count_u + consolid_count_u,
+            total_profiles: total_profiles as u64,
+            total_links: total_links as u64,
+            importance: NumericStats {
+                min: imp_min,
+                max: imp_max,
+                avg: imp_avg,
+                median: imp_median,
+                p95: imp_p95,
+                count: cnt as u64,
+            },
+            trust_score: NumericStats {
+                min: ts_min,
+                max: ts_max,
+                avg: ts_avg,
+                median: ts_median,
+                p95: ts_p95,
+                count: cnt as u64,
+            },
+            access_count: NumericStats {
+                min: ac_min,
+                max: ac_max,
+                avg: ac_avg,
+                median: ac_median,
+                p95: ac_p95,
+                count: cnt as u64,
+            },
+            content_length: NumericStats {
+                min: cl_min,
+                max: cl_max,
+                avg: cl_avg,
+                median: cl_median,
+                p95: cl_p95,
+                count: cnt as u64,
+            },
+            oldest_memory: oldest,
+            newest_memory: newest,
+            category_distribution: categories
+                .into_iter()
+                .map(|(label, count)| LabelCount {
+                    label,
+                    count: count as u64,
+                })
+                .collect(),
+            top_tags: tags
+                .into_iter()
+                .map(|(label, count)| LabelCount {
+                    label,
+                    count: count as u64,
+                })
+                .collect(),
+            source_distribution: sources
+                .into_iter()
+                .map(|(label, count)| LabelCount {
+                    label,
+                    count: count as u64,
+                })
+                .collect(),
+            feedback_positive: fb_pos,
+            feedback_negative: fb_neg,
+            immortal_count: immortal_count as u64,
+            mortal_count: (deep_count_u.saturating_sub(immortal_count as u64)),
+            expired_count: expired_count as u64,
+            consolid_depth_distribution: depths
+                .into_iter()
+                .map(|(label, count)| LabelCount {
+                    label,
+                    count: count as u64,
+                })
+                .collect(),
+            reminders_active: reminders_active as u64,
+            reminders_sent: reminders_sent as u64,
             per_profile,
         })
     }

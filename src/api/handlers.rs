@@ -5,7 +5,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::AppState;
-use crate::storage::{MemoryRecord, RetrievalLevel, SearchFilters, TagMatchMode};
+use crate::storage::{
+    DetailedStatsRequest, MemoryRecord, RetrievalLevel, SearchFilters, TagMatchMode,
+};
 
 fn compute_importance(text: &str) -> f32 {
     let mut score = 0.2f32;
@@ -2161,6 +2163,18 @@ pub async fn memory_stats(State(state): State<Arc<AppState>>) -> Json<Value> {
     }
 }
 
+// ── Detailed Stats ────────────────────────────────────────────
+
+pub async fn detailed_stats(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DetailedStatsRequest>,
+) -> Json<Value> {
+    match state.store.detailed_stats(req.profile.as_deref()).await {
+        Ok(stats) => Json(json!(stats)),
+        Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
 // ── Flush (manual buffer flush) ────────────────────────────────
 
 #[derive(Deserialize)]
@@ -2196,8 +2210,8 @@ mod tests {
 
     use crate::embeddings::EmbeddingProvider;
     use crate::storage::{
-        AssociativeResult, CompactReport, GraphNode, MemoryLink, MemoryRecord, MemoryStats,
-        MemoryStore, ProfileStatus, SnapshotDiff,
+        AssociativeResult, CompactReport, DetailedMemoryStats, GraphNode, MemoryLink, MemoryRecord,
+        MemoryStats, MemoryStore, NumericStats, ProfileStatus, SnapshotDiff, TierCounts,
     };
 
     #[derive(Default)]
@@ -2641,6 +2655,68 @@ mod tests {
                 fresh_count: 0,
                 deep_count: 0,
                 consolid_count: 0,
+                per_profile: vec![],
+            })
+        }
+
+        async fn detailed_stats(
+            &self,
+            _profile: Option<&str>,
+        ) -> Result<DetailedMemoryStats, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(DetailedMemoryStats {
+                tier_counts: TierCounts {
+                    fresh: 0,
+                    deep: 0,
+                    consolid: 0,
+                },
+                total_memories: 0,
+                total_profiles: 0,
+                total_links: 0,
+                importance: NumericStats {
+                    min: 0.0,
+                    max: 0.0,
+                    avg: 0.0,
+                    median: 0.0,
+                    p95: 0.0,
+                    count: 0,
+                },
+                trust_score: NumericStats {
+                    min: 0.0,
+                    max: 0.0,
+                    avg: 0.0,
+                    median: 0.0,
+                    p95: 0.0,
+                    count: 0,
+                },
+                access_count: NumericStats {
+                    min: 0.0,
+                    max: 0.0,
+                    avg: 0.0,
+                    median: 0.0,
+                    p95: 0.0,
+                    count: 0,
+                },
+                content_length: NumericStats {
+                    min: 0.0,
+                    max: 0.0,
+                    avg: 0.0,
+                    median: 0.0,
+                    p95: 0.0,
+                    count: 0,
+                },
+                oldest_memory: None,
+                newest_memory: None,
+                category_distribution: vec![],
+                top_tags: vec![],
+                source_distribution: vec![],
+                feedback_positive: 0,
+                feedback_negative: 0,
+                immortal_count: 0,
+                mortal_count: 0,
+                expired_count: 0,
+                consolid_depth_distribution: vec![],
+                reminders_active: 0,
+                reminders_sent: 0,
                 per_profile: vec![],
             })
         }

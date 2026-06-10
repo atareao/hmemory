@@ -165,6 +165,71 @@ pub struct ProfileTierCounts {
     pub consolid: u64,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DetailedStatsRequest {
+    pub profile: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct DetailedMemoryStats {
+    pub tier_counts: TierCounts,
+    pub total_memories: u64,
+    pub total_profiles: u64,
+    pub total_links: u64,
+    pub importance: NumericStats,
+    pub trust_score: NumericStats,
+    pub access_count: NumericStats,
+    pub content_length: NumericStats,
+    pub oldest_memory: Option<DateTime<Utc>>,
+    pub newest_memory: Option<DateTime<Utc>>,
+    pub category_distribution: Vec<LabelCount>,
+    pub top_tags: Vec<LabelCount>,
+    pub source_distribution: Vec<LabelCount>,
+    pub feedback_positive: i64,
+    pub feedback_negative: i64,
+    pub immortal_count: u64,
+    pub mortal_count: u64,
+    pub expired_count: u64,
+    pub consolid_depth_distribution: Vec<LabelCount>,
+    pub reminders_active: u64,
+    pub reminders_sent: u64,
+    pub per_profile: Vec<ProfileDetailedStats>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TierCounts {
+    pub fresh: u64,
+    pub deep: u64,
+    pub consolid: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct NumericStats {
+    pub min: f64,
+    pub max: f64,
+    pub avg: f64,
+    pub median: f64,
+    pub p95: f64,
+    pub count: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct LabelCount {
+    pub label: String,
+    pub count: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ProfileDetailedStats {
+    pub profile: String,
+    pub tier_counts: TierCounts,
+    pub importance_avg: f64,
+    pub top_category: Option<String>,
+    pub feedback_positive: i64,
+    pub feedback_negative: i64,
+    pub memory_count: u64,
+}
+
 #[derive(Clone, Serialize)]
 pub struct CompactReport {
     pub merged_pairs: Vec<(i64, i64, f64)>,
@@ -437,6 +502,11 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     async fn memory_stats(&self) -> Result<MemoryStats, Box<dyn std::error::Error + Send + Sync>>;
+
+    async fn detailed_stats(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<DetailedMemoryStats, Box<dyn std::error::Error + Send + Sync>>;
 
     async fn get_consolid_by_depth_since(
         &self,

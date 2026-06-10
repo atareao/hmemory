@@ -398,6 +398,21 @@ class HMemoryProvider(MemoryProvider):
                     "required": ["query"],
                 },
             },
+            {
+                "name": "hmemory_stats",
+                "description": "Get detailed memory statistics: counts, importance distribution, top categories/tags/sources, feedback, reminders, and per-profile breakdown",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "profile": {
+                            "type": "string",
+                            "optional": True,
+                            "description": "Filter stats to a specific profile (omit for global)",
+                        },
+                    },
+                    "required": [],
+                },
+            },
         ]
         return schemas
 
@@ -533,9 +548,22 @@ class HMemoryProvider(MemoryProvider):
                     json={"id": args.get("id"), "useful": args.get("useful")},
                     timeout=10,
                 )
-                return json.dumps(resp.json())
+                return json.dumps(resp.json(), ensure_ascii=False)
             except requests.RequestException as e:
-                return json.dumps({"ok": False, "error": str(e)})
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+        if tool_name == "hmemory_stats":
+            try:
+                resp = requests.post(
+                    f"{self._base_url}/stats/detailed",
+                    json={"profile": self._profile}
+                    if not args.get("profile")
+                    else {"profile": args["profile"]},
+                    timeout=10,
+                )
+                return json.dumps(resp.json(), ensure_ascii=False)
+            except requests.RequestException as e:
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
         if tool_name == "hmemory_remind":
             try:
@@ -545,11 +573,12 @@ class HMemoryProvider(MemoryProvider):
                 )
                 if not resp.ok:
                     return json.dumps(
-                        {"ok": False, "error": f"HTTP {resp.status_code}"}
+                        {"ok": False, "error": f"HTTP {resp.status_code}"},
+                        ensure_ascii=False,
                     )
-                return json.dumps(resp.json())
+                return json.dumps(resp.json(), ensure_ascii=False)
             except (requests.RequestException, json.JSONDecodeError) as e:
-                return json.dumps({"ok": False, "error": str(e)})
+                return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
         body = {
             "tool_name": tool_name.replace("hmemory_", "memory_"),
@@ -562,15 +591,21 @@ class HMemoryProvider(MemoryProvider):
                 json=body,
                 timeout=10,
             )
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError:
+                logger.error(
+                    "hmemory: empty/non-JSON response from %s. Status=%s, Body(len=%d)=%s",
+                    self._base_url,
+                    resp.status_code,
+                    len(resp.content),
+                    resp.content[:500],
+                )
+                raise
 
-            if (
-                tool_name == "hmemory_search"
-                and data.get("ok")
-                and data.get("memories")
-            ):
+            if tool_name == "hmemory_search" and data.get("ok") and data.get("results"):
                 level = args.get("level", "details")
-                memories = data["memories"]
+                memories = data["results"]
                 if level == "summary" and memories:
                     data = {
                         "ok": True,
@@ -593,9 +628,9 @@ class HMemoryProvider(MemoryProvider):
                         "count": len(lines),
                     }
 
-            return json.dumps(data)
-        except requests.RequestException as e:
-            return json.dumps({"ok": False, "error": str(e)})
+            return json.dumps(data, ensure_ascii=False)
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     def _write_to_memory_md(self, content: str, args: dict) -> None:
         """Replicate hmemory_add into Hermes native memory.md"""
@@ -641,7 +676,13 @@ class HMemoryProvider(MemoryProvider):
             logger.debug("on_memory_write sync failed: %s", e)
 
     def system_prompt_block(self) -> str:
-        return "hmemory external memory provider is active."
+        return (
+            "hmemory external memory provider is active.\n"
+            "IMPORTANTE: Usa hmemory (hmemory_add) para toda la memoria persistente. "
+            "NO uses la herramienta 'memory' ni escribas en MEMORY.md/USER.md. "
+            "El esquema de tags: fact (datos), preference (gustos), decision (decisiones), "
+            "plan (planes), correction (correcciones). Lo importante lleva immortal=true."
+        )
 
     def _truncate_to_tokens(self, text: str) -> str:
         if not self._context_tokens or self._context_tokens <= 0:
