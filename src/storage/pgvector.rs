@@ -316,7 +316,7 @@ impl PgVectorStore {
 
         let last_param = bm25_param + where_params.len() as u32 + 1;
         let sql = format!(
-            "{} , pdb.score(id) AS score FROM {} WHERE 1=1 AND content ||| ${} {} ORDER BY score DESC LIMIT ${}",
+            "{} , pdb.score(id)::double precision AS score FROM {} WHERE 1=1 AND content ||| ${} {} ORDER BY score DESC LIMIT ${}",
             Self::SELECT_COLS,
             table,
             bm25_param,
@@ -784,7 +784,7 @@ impl MemoryStore for PgVectorStore {
     ) -> Result<Option<(i64, f32)>, Box<dyn std::error::Error + Send + Sync>> {
         let vec_str = vec_to_pgstring(embedding);
         let row = sqlx::query(
-            "SELECT id, 1 - (embedding <=> $1::vector) AS sim FROM memories_deep WHERE 1 - (embedding <=> $1::vector) >= $2 ORDER BY sim DESC LIMIT 1",
+            "SELECT id, (1 - (embedding <=> $1::vector))::real AS sim FROM memories_deep WHERE (1 - (embedding <=> $1::vector))::real >= $2 ORDER BY sim DESC LIMIT 1",
         )
         .bind(&vec_str)
         .bind(threshold as f64)
