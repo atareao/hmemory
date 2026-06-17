@@ -1202,6 +1202,7 @@ impl MemoryStore for PgVectorStore {
         importance: Option<f32>,
         category: Option<String>,
         source: Option<String>,
+        immortal: Option<bool>,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let mut sets: Vec<String> = Vec::new();
         let mut pi = 1;
@@ -1228,6 +1229,10 @@ impl MemoryStore for PgVectorStore {
         }
         if source.is_some() {
             sets.push(format!("source = ${}", pi));
+            pi += 1;
+        }
+        if immortal.is_some() {
+            sets.push(format!("immortal = ${}", pi));
             pi += 1;
         }
 
@@ -1259,6 +1264,9 @@ impl MemoryStore for PgVectorStore {
         }
         if let Some(ref s) = source {
             query = query.bind(s);
+        }
+        if let Some(i) = immortal {
+            query = query.bind(i);
         }
         query = query.bind(id);
 

@@ -136,8 +136,9 @@ pub struct PrefetchMemory {
     pub tags: Value,
     pub source: String,
     pub category: String,
-    pub created_at: DateTime<Utc>,
+    pub importance: f32,
     pub score: f64,
+    pub created_at: DateTime<Utc>,
 }
 
 pub async fn prefetch(
@@ -178,6 +179,7 @@ pub async fn prefetch(
                     tags: r.tags,
                     source: r.source,
                     category: r.category,
+                    importance: r.importance,
                     created_at: r.created_at,
                     score: r.score,
                 })
@@ -505,7 +507,8 @@ fn memory_add_schema() -> ToolSchema {
                 "category": {"type": "string", "description": "Category"},
                 "event_date": {"type": "string", "description": "RFC3339 datetime for scheduling / event date", "optional": true},
                 "reminder": {"type": "string", "description": "Relative interval like '30m','1h','2d' or absolute RFC3339 datetime", "optional": true},
-                "reminder_in": {"type": "string", "description": "From-now interval like '30m','2h','1d' (e.g. '2h' = reminder in 2 hours)", "optional": true}
+                "reminder_in": {"type": "string", "description": "From-now interval like '30m','2h','1d' (e.g. '2h' = reminder in 2 hours)", "optional": true},
+                "immortal": {"type": "boolean", "description": "If true, memory never expires", "optional": true}
             },
             "required": ["content"]
         }),
@@ -554,7 +557,8 @@ fn memory_update_schema() -> ToolSchema {
                 "tags": {"type": "object", "description": "New tags"},
                 "importance": {"type": "number", "description": "New importance score"},
                 "category": {"type": "string", "description": "New category"},
-                "source": {"type": "string", "description": "New source"}
+                "source": {"type": "string", "description": "New source"},
+                "immortal": {"type": "boolean", "description": "If true, memory never expires", "optional": true}
             },
             "required": ["id"]
         }),
@@ -952,6 +956,7 @@ pub async fn handle_tool_call(
                             json!({
                                 "id": r.id, "content": r.content, "tags": r.tags,
                                 "source": r.source, "category": r.category,
+                                "importance": r.importance, "immortal": r.immortal,
                                 "created_at": r.created_at, "score": r.score
                             })
                         })
@@ -1016,6 +1021,12 @@ pub async fn handle_tool_call(
             } else {
                 reminder
             };
+            let immortal = req
+                .args
+                .get("immortal")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let expires_at: Option<DateTime<Utc>> = None;
             let embedding = match state.embedder.embed(&content).await {
                 Ok(v) => v,
                 Err(e) => return Json(json!({ "ok": false, "error": e.to_string() })),
@@ -1036,8 +1047,8 @@ pub async fn handle_tool_call(
                     importance,
                     &source,
                     &category,
-                    None,
-                    false,
+                    expires_at,
+                    immortal,
                     event_date,
                     reminder_final.as_deref(),
                 )
@@ -1061,7 +1072,8 @@ pub async fn handle_tool_call(
                         "id": r.id, "profile": r.profile, "content": r.content,
                         "tags": r.tags, "source": r.source, "category": r.category,
                         "importance": r.importance, "created_at": r.created_at, "updated_at": r.updated_at,
-                        "feedback_positive": r.feedback_positive, "feedback_negative": r.feedback_negative
+                        "feedback_positive": r.feedback_positive, "feedback_negative": r.feedback_negative,
+                        "immortal": r.immortal
                     })).collect();
                     Json(json!({ "ok": true, "memories": memories, "total": total }))
                 }
@@ -1076,10 +1088,15 @@ pub async fn handle_tool_call(
             match state.store.get_by_id(id).await {
                 Ok(Some(record)) => Json(json!({ "ok": true,
                     "id": record.id, "profile": record.profile, "content": record.content,
-                    "tags": record.tags, "source": record.source, "category": record.category,
-                    "importance": record.importance, "created_at": record.created_at, "updated_at": record.updated_at,
+                    "tags": record.tags, "metadata": record.metadata, "source": record.source,
+                    "category": record.category, "importance": record.importance,
+                    "created_at": record.created_at, "updated_at": record.updated_at,
                     "feedback_positive": record.feedback_positive, "feedback_negative": record.feedback_negative,
-                    "score": record.score
+                    "score": record.score, "access_count": record.access_count,
+                    "last_accessed_at": record.last_accessed_at, "trust_score": record.trust_score,
+                    "immortal": record.immortal, "expires_at": record.expires_at,
+                    "event_date": record.event_date, "reminder_interval": record.reminder_interval,
+                    "reminder_at": record.reminder_at, "reminder_sent": record.reminder_sent
                 })),
                 Ok(None) => Json(json!({ "ok": false, "error": "not found" })),
                 Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
@@ -1112,9 +1129,13 @@ pub async fn handle_tool_call(
                 .get("source")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let immortal = req
+                .args
+                .get("immortal")
+                .and_then(|v| v.as_bool());
             match state
                 .store
-                .update_memory(id, content, tags, metadata, importance, category, source)
+                .update_memory(id, content, tags, metadata, importance, category, source, immortal)
                 .await
             {
                 Ok(updated) => Json(json!({ "ok": true, "updated": updated })),
@@ -1768,10 +1789,15 @@ pub async fn get_memory(
     match state.store.get_by_id(req.id).await {
         Ok(Some(record)) => Json(json!({ "ok": true,
             "id": record.id, "profile": record.profile, "content": record.content,
-            "tags": record.tags, "source": record.source, "category": record.category,
-            "importance": record.importance, "created_at": record.created_at, "updated_at": record.updated_at,
+            "tags": record.tags, "metadata": record.metadata, "source": record.source,
+            "category": record.category, "importance": record.importance,
+            "created_at": record.created_at, "updated_at": record.updated_at,
             "feedback_positive": record.feedback_positive, "feedback_negative": record.feedback_negative,
-            "score": record.score
+            "score": record.score, "access_count": record.access_count,
+            "last_accessed_at": record.last_accessed_at, "trust_score": record.trust_score,
+            "immortal": record.immortal, "expires_at": record.expires_at,
+            "event_date": record.event_date, "reminder_interval": record.reminder_interval,
+            "reminder_at": record.reminder_at, "reminder_sent": record.reminder_sent
         })),
         Ok(None) => Json(json!({ "ok": false, "error": "not found" })),
         Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
@@ -1787,6 +1813,7 @@ pub struct UpdateMemoryRequest {
     pub importance: Option<f32>,
     pub category: Option<String>,
     pub source: Option<String>,
+    pub immortal: Option<bool>,
 }
 
 pub async fn update_memory(
@@ -1803,6 +1830,7 @@ pub async fn update_memory(
             req.importance,
             req.category,
             req.source,
+            req.immortal,
         )
         .await
     {
@@ -2374,6 +2402,7 @@ mod tests {
             _importance: Option<f32>,
             _category: Option<String>,
             _source: Option<String>,
+            _immortal: Option<bool>,
         ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
             Ok(true)
         }

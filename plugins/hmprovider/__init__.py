@@ -249,6 +249,11 @@ class HMemoryProvider(MemoryProvider):
                         "importance": {"type": "number", "optional": True},
                         "category": {"type": "string", "optional": True},
                         "source": {"type": "string", "optional": True},
+                        "immortal": {
+                            "type": "boolean",
+                            "optional": True,
+                            "description": "If true, memory never expires",
+                        },
                     },
                     "required": ["id"],
                 },
@@ -554,11 +559,12 @@ class HMemoryProvider(MemoryProvider):
 
         if tool_name == "hmemory_stats":
             try:
+                payload = {}
+                if args.get("profile"):
+                    payload["profile"] = args["profile"]
                 resp = requests.post(
                     f"{self._base_url}/stats/detailed",
-                    json={"profile": self._profile}
-                    if not args.get("profile")
-                    else {"profile": args["profile"]},
+                    json=payload,
                     timeout=10,
                 )
                 return json.dumps(resp.json(), ensure_ascii=False)

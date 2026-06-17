@@ -323,6 +323,7 @@ pub trait MemoryStore: Send + Sync {
         importance: Option<f32>,
         category: Option<String>,
         source: Option<String>,
+        immortal: Option<bool>,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>>;
     async fn add_feedback(
         &self,
